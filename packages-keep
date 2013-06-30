@@ -1,0 +1,166 @@
+#!/usr/bin/env python
+"""
+packages-keep update|mark|unmark|edit  [PACKAGES...]
+
+Update apt-mark package manually-installed status according to
+the configuration file /etc/apt/packages.keep.
+
+This tries to address the following problems in `apt-get autoremove`:
+
+- Using apt-get marks packages manually installed. However, often you
+  install several packages and figure out soon that it doesn't do what
+  you want. How do you remember which packages you played with?
+
+- State information is kept in `/var/lib/apt/extended_states`, which
+  is not completely human-friendly.
+
+For this reason it is useful to keep the 'is this package wanted'
+information in a separate file which is updated only manually. There
+are also other similar tools such as `debfoster`, but it is cleaner to
+use the feature built in apt.
+
+"""
+import sys
+import os
+import subprocess
+import argparse
+import tempfile
+
+CONFIG_FILE = "/etc/apt/packages.keep"
+
+def main():
+    p = argparse.ArgumentParser(usage=__doc__.strip())
+    sub = p.add_subparsers()
+
+    p_update = sub.add_parser('update', help='Sync apt-mark status to packages.keep')
+    p_update.set_defaults(func=do_update)
+
+    p_mark = sub.add_parser('mark', help='Mark given packages as manually installed in packages.keep')
+    p_mark.add_argument('packages', nargs='+')
+    p_mark.set_defaults(func=do_mark)
+
+    p_unmark = sub.add_parser('unmark', help='Mark given packages as automatically installed in packages.keep')
+    p_unmark.add_argument('packages', nargs='+')
+    p_unmark.set_defaults(func=do_unmark)
+
+    p_edit = sub.add_parser('edit', help='Edit packages.keep with a text editor')
+    p_edit.set_defaults(func=do_edit)
+
+    args = p.parse_args()
+    args.func(args)
+
+    sys.exit(0)
+
+def do_update(args):
+    k = Keeper()
+    m = Marker()
+    m.mark_auto(m.manual.difference(k))
+    m.mark_manual(k)
+
+def do_mark(args):
+    items = args.packages
+    k = Keeper()
+    k.update(set(items))
+    k.save()
+
+def do_unmark(args):
+    items = args.packages
+    print(items)
+    k = Keeper()
+    k.difference_update(set(items))
+    k.save()
+
+def do_edit(args):
+    k = Keeper()
+    m = Marker()
+
+    new = m.manual.difference(k)
+    old = m.auto.intersection(k)
+    same = k.difference(new.union(old))
+
+    new = list(sorted(list(new)))
+    old = list(sorted(list(old)))
+    same = list(sorted(list(same)))
+
+    msg = "# -- New:\n%s\n\n# -- Removed:\n%s\n\n# -- Same:\n%s\n" % (
+            "\n".join(new), 
+            "\n".join("#" + x for x in old), 
+            "\n".join(same))
+
+    fd, fn = tempfile.mkstemp()
+    try:
+        os.write(fd, msg)
+        os.close(fd)
+        fd = None
+
+        ret = subprocess.call(['vi', fn])
+        if ret != 0:
+            print "Operation canceled."
+            sys.exit(1)
+
+        k2 = Keeper(filename=fn)
+        k2.save(filename=CONFIG_FILE)
+    finally:
+        if fd is not None:
+            os.close(fd)
+        os.unlink(fn)
+
+class Keeper(set):
+    def __init__(self, filename=CONFIG_FILE):
+        self.filename = filename
+        with open(self.filename, 'r') as f:
+            stream_to_set(f, self)
+
+    def save(self, filename=None):
+        if filename is None:
+            filename = self.filename
+        with open(filename + ".new", 'w') as f:
+            for item in sorted(list(self)):
+                f.write("%s\n" % item)
+        # atomic
+        os.rename(filename + ".new", filename)
+
+class Marker:
+    def __init__(self):
+        self.manual = set()
+        p = subprocess.Popen(['apt-mark', 'showmanual'],
+                             stdout=subprocess.PIPE)
+        out, err = p.communicate()
+        stream_to_set(out.splitlines(), self.manual)
+
+        self.auto = set()
+        p = subprocess.Popen(['apt-mark', 'showauto'],
+                             stdout=subprocess.PIPE)
+        out, err = p.communicate()
+        stream_to_set(out.splitlines(), self.auto)
+
+    def mark_auto(self, items):
+        items = self.manual.intersection(items)
+        self._mark(items, "auto")
+        self.auto.update(items)
+        self.manual.difference_update(items)
+
+    def mark_manual(self, items):
+        items = self.auto.intersection(items)
+        self._mark(items, "manual")
+        self.manual.update(items)
+        self.auto.difference_update(items)
+
+    def _mark(self, items, target):
+        items = list(sorted(list(items)))
+        print "-- Marking as %s:" % target
+        print "\n".join(items)
+        if items:
+            subprocess.call(['apt-mark', target] + items)
+
+def stream_to_set(stream, target):
+    for line in stream:
+        line = line.strip()
+        if line.startswith('#'):
+            continue
+        if line:
+            target.add(line)
+
+if __name__ == "__main__":
+    main()
+
