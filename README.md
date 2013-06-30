@@ -2,8 +2,8 @@
 packages-keep
 =============
 
-Maintain apt's manually-installed status by keeping a separate
-configuration file /etc/apt/packages.keep.
+Maintain apt's (the package manager in Debian Linux) manually-installed status
+by keeping a separate configuration file /etc/apt/packages.keep.
 
 This tries to address the following problems in `apt-get autoremove`:
 
