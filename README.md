@@ -7,7 +7,7 @@ by keeping a separate configuration file /etc/apt/packages.keep.
 This tries to address the following problems in `apt-get autoremove`:
 
 - Using apt-get marks packages manually installed. However, often you
-  install several packages and figure out soon that it doesn't do what
+  install several packages and figure out soon that they don't do what
   you want. How do you remember which packages you played with?
 
 - State information is kept in `/var/lib/apt/extended_states`, which
